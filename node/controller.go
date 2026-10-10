@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/perfect-panel/ppanel-node/api/panel"
 	"github.com/perfect-panel/ppanel-node/common/logx"
@@ -15,6 +16,9 @@ import (
 )
 
 type Controller struct {
+	userMu                  sync.Mutex
+	syncCancel              context.CancelFunc
+	syncDone                chan struct{}
 	server                  *vCore.XrayCore
 	apiClient               *panel.NodeClient
 	tag                     string
@@ -106,6 +110,7 @@ func (c *Controller) Start() error {
 	}
 	logx.Node(c.tag).WithField("user_added", added).Info("已添加新用户")
 	c.startTasks(c.info)
+	c.startCredentialSync()
 	return nil
 }
 
@@ -114,6 +119,11 @@ func (c *Controller) Start() error {
 func (c *Controller) Stop() error {
 	if c == nil {
 		return nil
+	}
+	if c.syncCancel != nil {
+		c.syncCancel()
+		<-c.syncDone
+		c.syncCancel = nil
 	}
 	if c.userListMonitorPeriodic != nil {
 		c.userListMonitorPeriodic.Close()

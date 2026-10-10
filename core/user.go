@@ -109,9 +109,6 @@ func (vc *XrayCore) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.Use
 func (v *XrayCore) AddUsers(p *AddUsersParams) (added int, err error) {
 	v.users.mapLock.Lock()
 	defer v.users.mapLock.Unlock()
-	for i := range p.Users {
-		v.users.uidMap[format.UserTag(p.Tag, p.Users[i].Uuid)] = p.Users[i].Id
-	}
 	var users []*protocol.User
 	switch p.NodeInfo.Type {
 	case "vmess":
@@ -138,7 +135,7 @@ func (v *XrayCore) AddUsers(p *AddUsersParams) (added int, err error) {
 	if err != nil {
 		return 0, fmt.Errorf("get user manager error: %s", err)
 	}
-	for _, u := range users {
+	for i, u := range users {
 		mUser, err := u.ToMemoryUser()
 		if err != nil {
 			return 0, err
@@ -149,6 +146,7 @@ func (v *XrayCore) AddUsers(p *AddUsersParams) (added int, err error) {
 		if err != nil {
 			return 0, err
 		}
+		v.users.uidMap[format.UserTag(p.Tag, p.Users[i].Uuid)] = p.Users[i].Id
 	}
 	return len(users), nil
 }

@@ -2,7 +2,6 @@ package node
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"time"
 
@@ -57,58 +56,86 @@ func usesTLSCertificate(node *panel.NodeInfo) bool {
 }
 
 func (c *Controller) userListMonitor(ctx context.Context) (err error) {
+	c.userMu.Lock()
+	defer c.userMu.Unlock()
+	return c.refreshUsers(ctx)
+}
+
+func (c *Controller) refreshUsers(ctx context.Context) (err error) {
+	// ETag is a download optimisation, not an apply acknowledgement.
+	defer func() {
+		if err != nil {
+			c.apiClient.ResetUserETag()
+		}
+	}()
 	// get user info
 	newU, err := c.apiClient.GetUserList(ctx)
 	if err != nil {
 		logx.Node(c.tag).WithError(err).Error("获取用户列表失败")
-		return nil
+		return err
 	}
 	// get user alive
 	newA, err := c.apiClient.GetUserAlive()
 	if err != nil {
 		logx.Node(c.tag).WithError(err).Error("获取在线列表失败")
-		return nil
+		return err
 	}
 	// update alive list
 	if newA != nil {
-		c.limiter.AliveList = newA
+		c.limiter.SetAliveList(newA)
 	}
 	// update user list
 	// newU == nil indicates 304 Not Modified; empty slice means the list is empty
 	if newU == nil {
 		return nil
 	}
+	return c.applyUsers(newU)
+}
+
+func (c *Controller) applyUsers(newU []panel.UserInfo) (err error) {
 	deleted, added := compareUserList(c.userList, newU)
+	if len(deleted)+len(added) == 0 {
+		return nil
+	}
+	// Track successful individual operations so a partial failure can resume,
+	// without repeatedly scanning the entire list for each removed user.
+	applied := make(map[panel.UserInfo]struct{}, len(c.userList)+len(added))
+	for _, u := range c.userList {
+		applied[u] = struct{}{}
+	}
+	defer func() {
+		c.userList = make([]panel.UserInfo, 0, len(applied))
+		for u := range applied {
+			c.userList = append(c.userList, u)
+		}
+	}()
 	if len(deleted) > 0 {
 		c.collectTraffic(0)
 		// have deleted users
-		err = c.server.DelUsers(deleted, c.tag, c.info)
-		if err != nil {
-			logx.Node(c.tag).WithError(err).Error("删除用户失败")
-			return nil
+		for _, u := range deleted {
+			if err = c.server.DelUsers([]panel.UserInfo{u}, c.tag, c.info); err != nil {
+				return err
+			}
+			delete(applied, u)
+			c.limiter.UpdateUser(c.tag, nil, []panel.UserInfo{u})
 		}
 	}
 	if len(added) > 0 {
 		// have added users
-		_, err = c.server.AddUsers(&vCore.AddUsersParams{
-			Tag:      c.tag,
-			NodeInfo: c.info,
-			Users:    added,
-		})
-		if err != nil {
-			logx.Node(c.tag).WithError(err).Error("添加用户失败")
-			return nil
+		for _, u := range added {
+			_, err = c.server.AddUsers(&vCore.AddUsersParams{
+				Tag:      c.tag,
+				NodeInfo: c.info,
+				Users:    []panel.UserInfo{u},
+			})
+			if err != nil {
+				logx.Node(c.tag).WithError(err).Error("添加用户失败")
+				return err
+			}
+			applied[u] = struct{}{}
+			c.limiter.UpdateUser(c.tag, []panel.UserInfo{u}, nil)
 		}
 	}
-	if len(added) > 0 || len(deleted) > 0 {
-		// update Limiter
-		c.limiter.UpdateUser(c.tag, added, deleted)
-		if err != nil {
-			logx.Node(c.tag).WithError(err).Error("更新限速用户失败")
-			return nil
-		}
-	}
-	c.userList = newU
 	if len(added)+len(deleted) != 0 {
 		logx.Node(c.tag).WithFields(map[string]interface{}{
 			"user_deleted": len(deleted),
@@ -166,14 +193,13 @@ func (c *Controller) reportOnlineAndStatus(ctx context.Context, userTraffic []pa
 }
 
 func compareUserList(old, new []panel.UserInfo) (deleted, added []panel.UserInfo) {
-	oldMap := make(map[string]int)
+	oldMap := make(map[panel.UserInfo]int)
 	for i, user := range old {
-		key := user.Uuid + strconv.Itoa(user.SpeedLimit)
-		oldMap[key] = i
+		oldMap[user] = i
 	}
 
 	for _, user := range new {
-		key := user.Uuid + strconv.Itoa(user.SpeedLimit)
+		key := user
 		if _, exists := oldMap[key]; !exists {
 			added = append(added, user)
 		} else {

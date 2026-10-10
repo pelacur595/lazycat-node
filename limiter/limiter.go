@@ -23,6 +23,7 @@ func NewManager() *Manager {
 }
 
 type Limiter struct {
+	aliveMu       sync.RWMutex
 	NodeType      string
 	SpeedLimit    int
 	UserOnlineIP  *sync.Map      // Key: TagUUID, value: {Key: Ip, value: Uid}
@@ -89,6 +90,8 @@ func (m *Manager) Delete(tag string) {
 }
 
 func (l *Limiter) UpdateUser(tag string, added []panel.UserInfo, deleted []panel.UserInfo) {
+	l.aliveMu.Lock()
+	defer l.aliveMu.Unlock()
 	for i := range deleted {
 		l.UserLimitInfo.Delete(format.UserTag(tag, deleted[i].Uuid))
 		l.UserOnlineIP.Delete(format.UserTag(tag, deleted[i].Uuid))
@@ -111,6 +114,12 @@ func (l *Limiter) UpdateUser(tag string, added []panel.UserInfo, deleted []panel
 		l.UserLimitInfo.Store(format.UserTag(tag, added[i].Uuid), userLimit)
 		l.UUIDtoUID[added[i].Uuid] = added[i].Id
 	}
+}
+
+func (l *Limiter) SetAliveList(alive map[int]int) {
+	l.aliveMu.Lock()
+	l.AliveList = alive
+	l.aliveMu.Unlock()
 }
 
 func (l *Limiter) CheckLimit(taguuid string, ip string, noUDPSource bool) (Bucket *ratelimit.Bucket, Reject bool) {
@@ -144,7 +153,9 @@ func (l *Limiter) CheckLimit(taguuid string, ip string, noUDPSource bool) (Bucke
 		// Store online user for device limit
 		ipMap := new(sync.Map)
 		ipMap.Store(ip, uid)
+		l.aliveMu.RLock()
 		aliveIp := l.AliveList[uid]
+		l.aliveMu.RUnlock()
 		// If any device is online
 		if v, ok := l.UserOnlineIP.LoadOrStore(taguuid, ipMap); ok {
 			ipMap := v.(*sync.Map)
