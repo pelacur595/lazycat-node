@@ -2,6 +2,15 @@ name: Build and Release
 
 on:
   workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "scripts/**"
+      - "config.example.yml"
+      - ".github/workflows/release.yml"
 
 permissions:
   contents: read
