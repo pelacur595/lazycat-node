@@ -6,6 +6,7 @@ yellow='\033[0;33m'
 plain='\033[0m'
 
 cur_dir=$(pwd)
+set -o pipefail
 
 # check root
 [[ $EUID -ne 0 ]] && echo -e "${red}错误：${plain} 必须使用root用户运行此脚本！\n" && exit 1
@@ -73,10 +74,9 @@ if [[ $arch == "x86_64" || $arch == "x64" || $arch == "amd64" ]]; then
 elif [[ $arch == "aarch64" || $arch == "arm64" ]]; then
     arch="arm64-v8a"
 elif [[ $arch == "s390x" ]]; then
-    arch="s390x"
+    echo "This release supports amd64 and arm64 only"; exit 1
 else
-    arch="64"
-    echo -e "${red}检测架构失败，使用默认架构: ${arch}${plain}"
+    echo "Unsupported architecture: $arch"; exit 1
 fi
 
 if [ "$(getconf WORD_BIT)" != '32' ] && [ "$(getconf LONG_BIT)" != '64' ] ; then
@@ -223,6 +223,7 @@ generate_ppnode_config() {
         local secret_key="$3"
 
         mkdir -p /etc/PPanel-node >/dev/null 2>&1
+        umask 077
         cat > /etc/PPanel-node/config.yml <<EOF
 Log:
   # 日志等级，可选: debug, info, warn(warning), error
@@ -253,9 +254,8 @@ EOF
             systemctl restart PPanel-node
         fi
         sleep 2
-        check_status
         echo -e ""
-        if [[ $? == 0 ]]; then
+        if check_status; then
             echo -e "${green}PPanel-node 重启成功${plain}"
         else
             echo -e "${red}PPanel-node 可能启动失败，请使用 ppnode log 查看日志信息${plain}"
@@ -264,42 +264,39 @@ EOF
 
 install_ppnode() {
     local version_param="$1"
-    if [[ -e /usr/local/PPanel-node/ ]]; then
-        rm -rf /usr/local/PPanel-node/
-    fi
-
-    mkdir /usr/local/PPanel-node/ -p
-    cd /usr/local/PPanel-node/
-
-    if  [[ -z "$version_param" ]] ; then
-        last_version=$(curl -Ls "https://api.github.com/repos/perfect-panel/PPanel-node/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        if [[ ! -n "$last_version" ]]; then
-            echo -e "${red}检测 PPanel-node 版本失败，可能是超出 Github API 限制，请稍后再试，或手动指定 PPanel-node 版本安装${plain}"
-            exit 1
-        fi
-        echo -e "${green}检测到最新版本：${last_version}，开始安装...${plain}"
-        url="https://github.com/perfect-panel/PPanel-node/releases/download/${last_version}/ppanel-node-linux-${arch}.zip"
-        curl -sL "$url" | pv -s 30M -W -N "下载进度" > /usr/local/PPanel-node/ppanel-node-linux.zip
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}下载 PPanel-node 失败，请确保你的服务器能够下载 Github 的文件${plain}"
-            exit 1
-        fi
+    # Validate all downloads before touching the installed binary or service.
+    local stage archive
+    stage=$(mktemp -d /tmp/lazycat-node-install.XXXXXXXX) || exit 1
+    trap '[[ -n "$install_stage" && "$install_stage" == /tmp/lazycat-node-install.* ]] && rm -rf -- "$install_stage"' EXIT
+    install_stage="$stage"
+    if [[ -z "$version_param" ]]; then
+        last_version=$(curl -fsSL --retry 3 "https://api.github.com/repos/pelacur595/lazycat-node/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     else
-    last_version=$version_param
-        url="https://github.com/perfect-panel/PPanel-node/releases/download/${last_version}/ppanel-node-linux-${arch}.zip"
-        curl -sL "$url" | pv -s 30M -W -N "下载进度" > /usr/local/PPanel-node/ppanel-node-linux.zip
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}下载 PPanel-node $1 失败，请确保此版本存在${plain}"
-            exit 1
-        fi
+        last_version="$version_param"
     fi
-
-    unzip ppanel-node-linux.zip
-    rm ppanel-node-linux.zip -f
-    chmod +x ppnode
-    mkdir /etc/PPanel-node/ -p
-    cp geoip.dat /etc/PPanel-node/
-    cp geosite.dat /etc/PPanel-node/
+    [[ "$last_version" =~ ^[a-zA-Z0-9._-]+$ ]] || { echo "Cannot resolve release version"; exit 1; }
+    archive="ppanel-node-linux-${arch}.zip"
+    url="https://github.com/pelacur595/lazycat-node/releases/download/${last_version}/${archive}"
+    curl -fL --retry 3 "$url" -o "$stage/$archive" || exit 1
+    curl -fsSL --retry 3 "$url.sha256" -o "$stage/$archive.sha256" || exit 1
+    (cd "$stage" && sha256sum -c "$archive.sha256") || exit 1
+    unzip -tq "$stage/$archive" >/dev/null || exit 1
+    unzip -q "$stage/$archive" -d "$stage/unpacked" || exit 1
+    for required in ppnode config.yml geoip.dat geosite.dat ppnode.sh; do
+        [[ -s "$stage/unpacked/$required" ]] || { echo "Missing $required"; exit 1; }
+    done
+    bash -n "$stage/unpacked/ppnode.sh" || exit 1
+    mkdir -p /usr/local/PPanel-node /etc/PPanel-node || exit 1
+    install -m 755 "$stage/unpacked/ppnode" /usr/local/PPanel-node/ppnode.new || exit 1
+    if [[ x"${release}" == x"alpine" ]]; then
+        service PPanel-node stop 2>/dev/null || true
+    else
+        systemctl stop PPanel-node 2>/dev/null || true
+    fi
+    mv -f /usr/local/PPanel-node/ppnode.new /usr/local/PPanel-node/ppnode || exit 1
+    cp "$stage/unpacked/geoip.dat" "$stage/unpacked/geosite.dat" /etc/PPanel-node/ || exit 1
+    install -m 755 "$stage/unpacked/ppnode.sh" /usr/bin/ppnode || exit 1
+    cd "$stage/unpacked" || exit 1
     if [[ x"${release}" == x"alpine" ]]; then
         rm /etc/init.d/PPanel-node -f
         cat <<EOF > /etc/init.d/PPanel-node
@@ -359,7 +356,7 @@ EOF
             echo -e "${green}已根据参数生成 /etc/PPanel-node/config.yml${plain}"
             first_install=false
         else
-            cp config.yml /etc/PPanel-node/
+            install -m 600 config.yml /etc/PPanel-node/config.yml || exit 1
             first_install=true
         fi
     else
@@ -369,9 +366,8 @@ EOF
             systemctl start PPanel-node
         fi
         sleep 2
-        check_status
         echo -e ""
-        if [[ $? == 0 ]]; then
+        if check_status; then
             echo -e "${green}PPanel-node 重启成功${plain}"
         else
             echo -e "${red}PPanel-node 可能启动失败，请使用 ppnode log 查看日志信息${plain}"
@@ -380,11 +376,11 @@ EOF
     fi
 
 
-    curl -o /usr/bin/ppnode -Ls https://raw.githubusercontent.com/perfect-panel/ppanel-node/master/scripts/ppnode.sh
+    # Management script comes from the same verified release as the binary.
     chmod +x /usr/bin/ppnode
 
-    cd $cur_dir
-    rm -f install.sh
+    cd "$cur_dir"
+    # Keep the caller's files unchanged.
     echo "------------------------------------------"
     echo "PPanel-node 管理脚本使用方法: "
     echo "------------------------------------------"

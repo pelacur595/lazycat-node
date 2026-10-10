@@ -2,232 +2,87 @@ name: Build and Release
 
 on:
   workflow_dispatch:
-    inputs:
-      release_tag:
-        description: Existing release tag to rebuild and upload missing assets
-        required: false
-        type: string
-  push:
-    branches:
-      - master
-      - develop
-    paths:
-      - "**/*.go"
-      - "go.mod"
-      - "go.sum"
-      - ".github/workflows/*.yml"
-  pull_request:
-    types: [opened, synchronize, reopened]
-    paths:
-      - "**/*.go"
-      - "go.mod"
-      - "go.sum"
-      - ".github/workflows/*.yml"
-  release:
-    types: [published]
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.release_tag || github.sha }}
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.27.1'
-      - name: Test with race detector
-        run: go test -race -timeout 5m ./...
+          go-version-file: go.mod
+          cache: false
+      - name: Linux tests with race detector
+        run: go test -race -timeout 10m ./...
+      - name: Check shell syntax
+        run: bash -n scripts/install.sh && bash -n scripts/ppnode.sh
 
   build:
     needs: test
-    permissions:
-      contents: write
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        # Include amd64 on all platforms.
-        goos: [windows, freebsd, linux, darwin]
-        goarch: [amd64, 386]
-        exclude:
-          # Exclude i386 on darwin.
-          - goarch: 386
-            goos: darwin
         include:
-          # BEIGIN MacOS ARM64
-          - goos: darwin
-            goarch: arm64
-          # END MacOS ARM64
-          # BEGIN Linux ARM 5 6 7
-          - goos: linux
-            goarch: arm
-            goarm: 7
-          - goos: linux
-            goarch: arm
-            goarm: 6
-          - goos: linux
-            goarch: arm
-            goarm: 5
-          # END Linux ARM 5 6 7
-          # BEGIN Android ARM 8
-          - goos: android
-            goarch: arm64
-          # END Android ARM 8
-          # BEGIN Other architectures
-          # BEGIN riscv64 & ARM64
-          - goos: linux
-            goarch: arm64
-          - goos: linux
-            goarch: riscv64
-          # END riscv64 & ARM64
-          # BEGIN MIPS
-          - goos: linux
-            goarch: mips64
-          - goos: linux
-            goarch: mips64le
-          - goos: linux
-            goarch: mipsle
-          - goos: linux
-            goarch: mips
-          # END MIPS
-          # BEGIN PPC
-          - goos: linux
-            goarch: ppc64
-          - goos: linux
-            goarch: ppc64le
-          # END PPC
-          # BEGIN FreeBSD ARM
-          - goos: freebsd
-            goarch: arm64
-          - goos: freebsd
-            goarch: arm
-            goarm: 7
-          # END FreeBSD ARM
-          # BEGIN S390X
-          - goos: linux
-            goarch: s390x
-          # END S390X
-          # END Other architectures
-      fail-fast: false
-
-    runs-on: ubuntu-latest
+          - arch: amd64
+            asset: "64"
+          - arch: arm64
+            asset: arm64-v8a
     env:
-      GOOS: ${{ matrix.goos }}
-      GOARCH: ${{ matrix.goarch }}
-      GOARM: ${{ matrix.goarm }}
-      CGO_ENABLED: 0
-      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag || '' }}
+      GOOS: linux
+      GOARCH: ${{ matrix.arch }}
+      CGO_ENABLED: "0"
     steps:
-      - name: Checkout codebase
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          ref: ${{ inputs.release_tag || github.sha }}
-      - name: Show workflow information
-        id: get_filename
-        run: |
-          export _NAME=$(jq ".[\"$GOOS-$GOARCH$GOARM$GOMIPS\"].friendlyName" -r < .github/build/friendly-filenames.json)
-          echo "GOOS: $GOOS, GOARCH: $GOARCH, GOARM: $GOARM, GOMIPS: $GOMIPS, RELEASE_NAME: $_NAME"
-          echo "ASSET_NAME=$_NAME" >> $GITHUB_OUTPUT
-          echo "ASSET_NAME=$_NAME" >> $GITHUB_ENV
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.27.1'
-
-      - name: Get project dependencies
-        run: go mod download
-      - name: Set build version
+          go-version-file: go.mod
+          cache: false
+      - name: Build native binary and package
         env:
-          GH_TOKEN: ${{ github.token }}
+          ASSET: ${{ matrix.asset }}
         run: |
-          if [[ -n "$RELEASE_TAG" ]]; then
-            git check-ref-format "refs/tags/$RELEASE_TAG"
-            gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null
-            printf 'version=%s\n' "$RELEASE_TAG" >> "$GITHUB_ENV"
-          else
-            printf 'version=%s\n' "$GITHUB_SHA" >> "$GITHUB_ENV"
-          fi
-      - name: Build
-        run: |
-          echo "version: $version"
+          set -euo pipefail
+          version="sync-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:8}"
           mkdir -p build_assets
-          build_ldflags="-X 'github.com/perfect-panel/ppanel-node/cmd.version=$version' -s -w -buildid="
-          if [[ "$GOOS" == "android" ]]; then
-            # anet uses net.zoneCache via go:linkname on Android (Go 1.23+).
-            build_ldflags+=" -checklinkname=0"
-          fi
-          go build -v -o build_assets/ppnode -trimpath -ldflags "$build_ldflags"
-
-      - name: Build Mips softfloat
-        if: matrix.goarch == 'mips' || matrix.goarch == 'mipsle'
-        run: |
-          echo "version: $version"
-          GOMIPS=softfloat go build -v -o build_assets/ppnode_softfloat -trimpath -ldflags "-X 'github.com/perfect-panel/ppanel-node/cmd.version=$version' -s -w -buildid="
-      - name: Rename Windows
-        if: matrix.goos == 'windows'
-        run: |
-          cd ./build_assets || exit 1
-          mv ppnode ppnode.exe
-      - name: Prepare to release
-        run: |
-          cp ${GITHUB_WORKSPACE}/README.md ./build_assets/README.md
-          cp ${GITHUB_WORKSPACE}/LICENSE ./build_assets/LICENSE
-          LIST=('geoip' 'geosite')
-          for i in "${LIST[@]}"
-          do
-            DOWNLOAD_URL="https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/${i}.dat"
-            FILE_NAME="${i}.dat"
-            echo -e "Downloading ${DOWNLOAD_URL}..."
-            curl -L "${DOWNLOAD_URL}" -o ./build_assets/${FILE_NAME}
+          go build -trimpath -ldflags "-X github.com/perfect-panel/ppanel-node/cmd.version=$version -s -w -buildid=" -o build_assets/ppnode .
+          cp README.md LICENSE CREDENTIAL-SYNC.md build_assets/
+          cp config.example.yml build_assets/config.yml
+          cp scripts/ppnode.sh build_assets/
+          for name in geoip geosite; do
+            curl -fL --retry 3 "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/$name.dat" -o "build_assets/$name.dat"
           done
-      - name: Create ZIP archive
-        shell: bash
-        run: |
-          pushd build_assets || exit 1
-          touch -mt $(date +%Y01010000) *
-          zip -9vr ../ppanel-node-$ASSET_NAME.zip .
-          popd || exit 1
-          FILE=./ppanel-node-$ASSET_NAME.zip
-          DGST=$FILE.dgst
-          for METHOD in {"md5","sha1","sha256","sha512"}
-          do
-            openssl dgst -$METHOD $FILE | sed 's/([^)]*)//g' >>$DGST
-          done
-      - name: Change the name
-        run: |
-          mv build_assets ppanel-node-$ASSET_NAME
-      - name: Upload files to Artifacts
-        uses: actions/upload-artifact@v4
+          (cd build_assets && zip -9 "../ppanel-node-linux-$ASSET.zip" *)
+          sha256sum "ppanel-node-linux-$ASSET.zip" > "ppanel-node-linux-$ASSET.zip.sha256"
+      - uses: actions/upload-artifact@v4
         with:
-          name: ppanel-node-${{ steps.get_filename.outputs.ASSET_NAME }}
+          name: linux-${{ matrix.asset }}
           path: |
-            ./ppanel-node-${{ steps.get_filename.outputs.ASSET_NAME }}/*
-      - name: Upload binaries to release
-        if: env.RELEASE_TAG != ''
+            ppanel-node-linux-*.zip
+            ppanel-node-linux-*.zip.sha256
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Publish complete release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --json assets --jq '.assets[].name' > release-assets.txt
-          archive="ppanel-node-$ASSET_NAME.zip"
-          checksum="$archive.dgst"
-          if grep -Fxq -- "$archive" release-assets.txt; then
-            if grep -Fxq -- "$checksum" release-assets.txt; then
-              printf 'Keeping existing assets: %s and %s\n' "$archive" "$checksum"
-              exit 0
-            fi
-            # A checksum must describe the archive already published, which
-            # may differ from this rebuild (for example after geodata updates).
-            mkdir -p existing-release
-            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-              --pattern "$archive" --dir existing-release
-            : > "$checksum"
-            for method in md5 sha1 sha256 sha512; do
-              openssl dgst "-$method" "existing-release/$archive" | sed 's/([^)]*)//g' >> "$checksum"
-            done
-          elif grep -Fxq -- "$checksum" release-assets.txt; then
-            printf 'Checksum exists without its archive: %s\n' "$checksum" >&2
-            exit 1
-          else
-            gh release upload "$RELEASE_TAG" "$archive" --repo "$GITHUB_REPOSITORY"
-          fi
-          gh release upload "$RELEASE_TAG" "$checksum" --repo "$GITHUB_REPOSITORY"
+          set -euo pipefail
+          cd release
+          sha256sum -c ./*.sha256
+          tag="sync-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:8}"
+          gh release create "$tag" ./*.zip ./*.sha256 --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "LazyCat Node $tag" --notes "Linux amd64/arm64. Credential synchronization fork; retains upstream core versions. Preserve /etc/PPanel-node/config.yml. Requires matching backend for immediate synchronization."
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest

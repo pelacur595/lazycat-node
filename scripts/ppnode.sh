@@ -106,8 +106,21 @@ before_show_menu() {
     show_menu
 }
 
+run_installer() {
+    local script result
+    script=$(mktemp /tmp/lazycat-installer.XXXXXXXX) || return 1
+    if ! curl -fsSL --retry 3 https://raw.githubusercontent.com/pelacur595/lazycat-node/master/scripts/install.sh -o "$script"; then
+        rm -f -- "$script"
+        return 1
+    fi
+    bash "$script" "$@"
+    result=$?
+    rm -f -- "$script"
+    return "$result"
+}
+
 install() {
-    bash <(curl -Ls https://raw.githubusercontent.com/perfect-panel/PPanel-node/master/scripts/install.sh)
+    run_installer
     if [[ $? == 0 ]]; then
         if [[ $# == 0 ]]; then
             start
@@ -123,7 +136,7 @@ update() {
     else
         version=$2
     fi
-    bash <(curl -Ls https://raw.githubusercontent.com/perfect-panel/PPanel-node/master/scripts/install.sh) $version
+    run_installer "$version"
     if [[ $? == 0 ]]; then
         echo -e "${green}更新完成，已自动重启 PPanel-node，请使用 ppnode log 查看运行日志${plain}"
         exit
@@ -308,7 +321,13 @@ show_log() {
 
 
 update_shell() {
-    wget -O /usr/bin/ppnode -N --no-check-certificate https://raw.githubusercontent.com/perfect-panel/ppanel-node/master/scripts/ppnode.sh
+    local script
+    script=$(mktemp /tmp/lazycat-manager.XXXXXXXX) || return 1
+    curl -fsSL --retry 3 https://raw.githubusercontent.com/pelacur595/lazycat-node/master/scripts/ppnode.sh -o "$script" &&
+        bash -n "$script" && command install -m 755 "$script" /usr/bin/ppnode
+    local result=$?
+    rm -f -- "$script"
+    [[ $result == 0 ]]
     if [[ $? != 0 ]]; then
         echo ""
         echo -e "${red}下载脚本失败，请检查本机能否连接 Github${plain}"
@@ -517,7 +536,7 @@ show_usage() {
 show_menu() {
     echo -e "
   ${green}PPanel-node 后端管理脚本，${plain}${red}不适用于docker${plain}
---- https://github.com/perfect-panel/PPanel-node ---
+--- https://github.com/pelacur595/lazycat-node ---
   ${green}0.${plain} 修改配置
 ————————————————
   ${green}1.${plain} 安装 PPanel-node

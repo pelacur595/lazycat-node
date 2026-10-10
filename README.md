@@ -1,4 +1,4 @@
-# PPanel-node
+# LazyCat Node (PPanel-node fork)
 
 A PPanel node server based on xray-core, modified from v2node.  
 一个基于xray内核的PPanel节点服务端，修改自v2node
@@ -8,7 +8,7 @@ A PPanel node server based on xray-core, modified from v2node.
 ### 一键安装
 
 ```
-wget -N https://raw.githubusercontent.com/perfect-panel/PPanel-node/master/scripts/install.sh && bash install.sh
+curl -fL https://raw.githubusercontent.com/pelacur595/lazycat-node/master/scripts/install.sh -o /tmp/lazycat-node-install.sh && bash /tmp/lazycat-node-install.sh
 ```
 
 ## 构建
@@ -55,8 +55,13 @@ Android arm64 交叉构建需要额外的链接参数，供 `anet` 访问 Androi
 GOTOOLCHAIN=go1.27.1 GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -checklinkname=0" -o ./output/ppnode-android .
 ```
 
-如果 release 部分平台构建失败，可在 Actions 的 **Build and Release → Run workflow** 中填写
-已有的 `release_tag`。工作流会构建该标签对应的源码，只上传缺失的 ZIP 和校验文件，保留已有产物。
+本分支在 Actions 的 **Build and Release → Run workflow** 手动构建 Linux amd64/arm64。
+Linux race 测试通过后发布 ZIP 和 SHA-256 校验文件，临时 Actions 产物保留 7 天。
+安装和 `ppnode update` 均使用本仓库 Release；不再自动安装回官方版本。
+请用 root 执行安装命令，按照提示填写面板地址、服务器 ID 和通信密钥。
+更新保留 `/etc/PPanel-node/config.yml`；请先备份该目录，在一台节点验证后再批量更新。
+即时同步需要配套改版后端、HTTPS 及反向代理支持 WebSocket Upgrade，详见
+[CREDENTIAL-SYNC.md](CREDENTIAL-SYNC.md)。上游归属及 MPL-2.0 许可证保持不变。
 
 用户列表流式 JSON 解码的性能基准：
 
