@@ -178,7 +178,7 @@ func (c *XrayCore) startTasks(serverconfig *panel.ServerConfigResponse) {
 }
 
 func (c *XrayCore) ServerConfigMonitor(ctx context.Context) (err error) {
-	newServerConfig, err := panel.GetServerConfig(ctx, c.Client)
+	newServerConfig, err := panel.CheckServerConfig(ctx, c.Client)
 	if err != nil {
 		logx.Component("xray").WithError(err).Error("获取服务端配置失败")
 		return nil

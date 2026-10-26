@@ -125,6 +125,16 @@ type Protocol struct {
 }
 
 func GetServerConfig(ctx context.Context, c *ServerClient) (*ServerConfigResponse, error) {
+	return getServerConfig(ctx, c, true)
+}
+
+// CheckServerConfig leaves the running instance's configuration baseline intact.
+// If applying the candidate fails, the next poll must offer it again.
+func CheckServerConfig(ctx context.Context, c *ServerClient) (*ServerConfigResponse, error) {
+	return getServerConfig(ctx, c, false)
+}
+
+func getServerConfig(ctx context.Context, c *ServerClient, remember bool) (*ServerConfigResponse, error) {
 	client := c.Client
 	path := fmt.Sprintf("/v2/server/%d", c.ServerId)
 	request := client.R().
@@ -173,7 +183,7 @@ func GetServerConfig(ctx context.Context, c *ServerClient) (*ServerConfigRespons
 	if resp.Data.Protocols == nil {
 		return nil, fmt.Errorf("协议配置为空")
 	}
-	if etag := r.Header().Get("ETag"); etag != "" {
+	if etag := r.Header().Get("ETag"); remember && etag != "" {
 		c.ServerConfigEtag = etag
 	}
 
@@ -182,6 +192,8 @@ func GetServerConfig(ctx context.Context, c *ServerClient) (*ServerConfigRespons
 	if c.responseBodyHash == newBodyHash {
 		return nil, nil
 	}
-	c.responseBodyHash = newBodyHash
+	if remember {
+		c.responseBodyHash = newBodyHash
+	}
 	return resp, nil
 }
