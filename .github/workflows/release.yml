@@ -28,6 +28,13 @@ jobs:
         run: go test -race -timeout 10m ./...
       - name: Check shell syntax
         run: bash -n scripts/install.sh && bash -n scripts/ppnode.sh
+      - name: Verify IPv4 and IPv6 UDP hopping in isolated Linux namespaces
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y nftables iptables iproute2
+          go test -c -o "$RUNNER_TEMP/porthop.test" ./common/porthop
+          sudo unshare --mount --net --propagation private env PPNODE_FIREWALL_TEST=isolated "$RUNNER_TEMP/porthop.test" -test.v -test.run '^TestLinuxForwarding$' -test.timeout 2m
 
   build:
     needs: test
@@ -57,7 +64,7 @@ jobs:
           version="sync-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:8}"
           mkdir -p build_assets
           go build -trimpath -ldflags "-X github.com/perfect-panel/ppanel-node/cmd.version=$version -s -w -buildid=" -o build_assets/ppnode .
-          cp README.md LICENSE CREDENTIAL-SYNC.md build_assets/
+          cp README.md LICENSE CREDENTIAL-SYNC.md PORT-HOPPING.md build_assets/
           cp config.example.yml build_assets/config.yml
           cp scripts/ppnode.sh build_assets/
           for name in geoip geosite; do

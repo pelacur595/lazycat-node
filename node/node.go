@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/perfect-panel/ppanel-node/common/porthop"
 	"github.com/perfect-panel/ppanel-node/common/task"
 
 	"github.com/perfect-panel/ppanel-node/api/panel"
@@ -19,12 +21,18 @@ type Node struct {
 	traffic        *trafficQueue
 	reportPeriodic *task.Task
 	pushInterval   time.Duration
+	hopping        portHopper
 }
 
 func New(core *vCore.XrayCore, config *conf.Conf, serverconfig *panel.ServerConfigResponse) (*Node, error) {
+	specs, err := hoppingSpecs(*serverconfig.Data.Protocols)
+	if err != nil {
+		return nil, err
+	}
 	node := &Node{
 		controllers: make([]*Controller, 0, len(*serverconfig.Data.Protocols)),
 		traffic:     newTrafficQueue(),
+		hopping:     porthop.New(fmt.Sprintf("%s/%d", strings.TrimRight(config.ApiConfig.ApiHost, "/"), config.ApiConfig.ServerId), specs),
 	}
 	pushinterval := serverconfig.Data.PushInterval
 	if pushinterval <= 0 {
@@ -70,6 +78,11 @@ func New(core *vCore.XrayCore, config *conf.Conf, serverconfig *panel.ServerConf
 }
 
 func (n *Node) Prepare() error {
+	if n.hopping != nil {
+		if err := n.hopping.Prepare(); err != nil {
+			return err
+		}
+	}
 	for _, c := range n.controllers {
 		if c != nil && c.info.Protocol.Enable {
 			if err := c.Prepare(); err != nil {
@@ -113,6 +126,14 @@ func (n *Node) Start() error {
 		}
 	}
 	if n.reportPeriodic == nil {
+		if n.hopping != nil {
+			if err := n.hopping.Start(); err != nil {
+				return errors.Join(fmt.Errorf("start Hy2 port hopping: %w", err), n.Stop())
+			}
+			if err := n.hopping.CleanupStale(); err != nil {
+				logx.Component("node").WithError(err).Warn("清理历史 Hy2 跳跃规则失败，请检查防火墙权限")
+			}
+		}
 		n.reportPeriodic = &task.Task{Name: "reportNode", Interval: n.pushInterval, Execute: n.report}
 		_ = n.reportPeriodic.Start(false)
 	}
@@ -148,6 +169,9 @@ func (n *Node) Stop() error {
 		n.reportPeriodic = nil
 	}
 	var result error
+	if n.hopping != nil {
+		result = n.hopping.Stop()
+	}
 	for _, c := range n.controllers {
 		result = errors.Join(result, c.Stop())
 	}
@@ -158,7 +182,9 @@ func (n *Node) Close() {
 	if n == nil {
 		return
 	}
-	_ = n.Stop()
+	if err := n.Stop(); err != nil {
+		logx.Component("node").WithError(err).Error("停止节点或清理跳跃规则失败")
+	}
 	for _, c := range n.controllers {
 		if c == nil {
 			continue

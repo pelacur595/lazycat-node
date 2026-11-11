@@ -498,19 +498,10 @@ generate_config_file() {
 
 # 放开防火墙端口
 open_ports() {
-    systemctl stop firewalld.service 2>/dev/null
-    systemctl disable firewalld.service 2>/dev/null
-    setenforce 0 2>/dev/null
-    ufw disable 2>/dev/null
-    iptables -P INPUT ACCEPT 2>/dev/null
-    iptables -P FORWARD ACCEPT 2>/dev/null
-    iptables -P OUTPUT ACCEPT 2>/dev/null
-    iptables -t nat -F 2>/dev/null
-    iptables -t mangle -F 2>/dev/null
-    iptables -F 2>/dev/null
-    iptables -X 2>/dev/null
-    netfilter-persistent save 2>/dev/null
-    echo -e "${green}放开防火墙端口成功！${plain}"
+    echo -e "${yellow}请按需放行协议端口；本工具不清空系统防火墙或关闭安全服务。${plain}"
+    echo "Hy2 端口跳跃：在云安全组/NAT 上放行或映射配置的 UDP 端口范围。"
+    echo "主机防火墙需要允许转发后的 Hy2 主监听 UDP 端口。"
+    echo "节点启动后自动维护专用跳跃规则，请勿清空 nat 表。详见 PORT-HOPPING.md。"
 }
 
 show_usage() {
@@ -555,7 +546,7 @@ show_menu() {
   ${green}11.${plain} 查看 PPanel-node 版本
   ${green}12.${plain} 升级 PPanel-node 维护脚本
   ${green}13.${plain} 生成 PPanel-node 配置文件
-  ${green}14.${plain} 放行 VPS 的所有网络端口
+  ${green}14.${plain} 查看防火墙端口放行说明
   ${green}15.${plain} 退出脚本
  "
  #后续更新可加入上方字符串中
