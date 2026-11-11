@@ -15,6 +15,11 @@ and datagram goroutines. Waiting also observes the connection context so shutdow
 and peer disconnects release pending operations. It keeps upstream's proxy,
 authenticator, settings, packet interfaces, and congestion control.
 
+With the core pinned to `e087e74a1bf2` (26.9.30), `hub.go` uses
+`FinalMask.ListenPacket` instead of the removed `UdpmaskManager` API.
+The authentication waits above remain unchanged; TCP and both UDP modes are
+tested with and without Salamander masking.
+
 The listener is registered as `ppnode-tuic`; the inbound builder selects it after
 building the normal TUIC configuration. No global Go module cache is modified.
 Remove this compatibility module and the builder remapping once the pinned

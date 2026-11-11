@@ -31,10 +31,17 @@ jobs:
       - name: Verify IPv4 and IPv6 UDP hopping in isolated Linux namespaces
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y nftables iptables iproute2
+          if ! command -v nft || ! command -v iptables || ! command -v ip6tables || ! command -v ip; then
+            sudo apt-get update -qq
+            sudo apt-get install -y nftables iptables iproute2
+          fi
           go test -c -o "$RUNNER_TEMP/porthop.test" ./common/porthop
           sudo unshare --mount --net --propagation private env PPNODE_FIREWALL_TEST=isolated "$RUNNER_TEMP/porthop.test" -test.v -test.run '^TestLinuxForwarding$' -test.timeout 2m
+      - name: Verify new Hy2 core through actual hopping ports
+        run: |
+          set -euo pipefail
+          go test -c -o "$RUNNER_TEMP/hy2-hopping.test" ./core
+          sudo unshare --mount --net --propagation private env PPNODE_HY2_HOP_TEST=isolated "$RUNNER_TEMP/hy2-hopping.test" -test.v -test.run '^TestHy2HoppingIntegration$' -test.timeout 3m
 
   build:
     needs: test
@@ -64,7 +71,7 @@ jobs:
           version="sync-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:8}"
           mkdir -p build_assets
           go build -trimpath -ldflags "-X github.com/perfect-panel/ppanel-node/cmd.version=$version -s -w -buildid=" -o build_assets/ppnode .
-          cp README.md LICENSE CREDENTIAL-SYNC.md PORT-HOPPING.md build_assets/
+          cp README.md LICENSE CREDENTIAL-SYNC.md PORT-HOPPING.md CORE-UPGRADE.md build_assets/
           cp config.example.yml build_assets/config.yml
           cp scripts/ppnode.sh build_assets/
           for name in geoip geosite; do
@@ -100,5 +107,5 @@ jobs:
           cd release
           sha256sum -c ./*.sha256
           tag="sync-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:8}"
-          gh release create "$tag" ./*.zip ./*.sha256 --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "LazyCat Node $tag" --notes "Linux amd64/arm64. Credential synchronization fork; retains upstream core versions. Preserve /etc/PPanel-node/config.yml. Requires matching backend for immediate synchronization."
+          gh release create "$tag" ./*.zip ./*.sha256 --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "LazyCat Node $tag" --notes "Linux amd64/arm64. Xray fork 26.9.30 (e087e74a1bf2); preserves LazyCat credential sync, reload recovery, TUIC fixes and Hy2 port hopping. MPTCP disabled by build default. Existing panel API/configuration retained; no new device-admission API required. See CORE-UPGRADE.md and PORT-HOPPING.md. Preserve /etc/PPanel-node/config.yml."
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest

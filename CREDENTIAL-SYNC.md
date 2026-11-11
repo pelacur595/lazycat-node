@@ -1,7 +1,8 @@
 # 即时凭证同步（本地改版）
 
 基线：上游 `c1ccab9`。配套后端见相邻 `ppanel-server` 项目的
-`docs/node-credential-sync.md`。本次不升级上游已固定的核心版本。
+`docs/node-credential-sync.md`。后续核心升级记录见 `CORE-UPGRADE.md`；
+凭证同步与原有定时拉取逻辑在核心升级时保留。
 
 - 使用现有 ApiHost / ServerID / SecretKey，不增加节点入站端口。
 - 每个启用的协议控制器建立一条 WebSocket，空闲时回应心跳。
