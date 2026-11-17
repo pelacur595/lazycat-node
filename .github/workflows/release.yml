@@ -15,6 +15,8 @@ on:
       - "**/*.go"
       - "go.mod"
       - "go.sum"
+      - "scripts/**"
+      - "PORT-HOPPING.md"
       - ".github/workflows/*.yml"
   pull_request:
     types: [opened, synchronize, reopened]
@@ -40,6 +42,17 @@ jobs:
         run: |
           go test -race -timeout 5m ./...
           (cd pkg/nowhere && go test -race -timeout 5m ./...)
+      - name: Check installation script syntax
+        run: bash -n scripts/install.sh && bash -n scripts/ppnode.sh
+      - name: Verify Hy2 UDP hopping in isolated Linux namespaces
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y nftables iptables iproute2
+          go test -c -o "$RUNNER_TEMP/porthop.test" ./common/porthop
+          sudo unshare --mount --net --propagation private env PPNODE_FIREWALL_TEST=isolated "$RUNNER_TEMP/porthop.test" -test.v -test.run '^TestLinuxForwarding$' -test.timeout 2m
+          go test -c -o "$RUNNER_TEMP/hy2-hopping.test" ./core
+          sudo unshare --mount --net --propagation private env PPNODE_HY2_HOP_TEST=isolated "$RUNNER_TEMP/hy2-hopping.test" -test.v -test.run '^TestHy2HoppingIntegration$' -test.timeout 3m
 
   build:
     needs: test
@@ -173,6 +186,8 @@ jobs:
         run: |
           cp ${GITHUB_WORKSPACE}/README.md ./build_assets/README.md
           cp ${GITHUB_WORKSPACE}/LICENSE ./build_assets/LICENSE
+          cp ${GITHUB_WORKSPACE}/PORT-HOPPING.md ./build_assets/PORT-HOPPING.md
+          cp ${GITHUB_WORKSPACE}/UPSTREAM-BASELINE.md ./build_assets/UPSTREAM-BASELINE.md
           LIST=('geoip' 'geosite')
           for i in "${LIST[@]}"
           do

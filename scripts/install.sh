@@ -175,23 +175,23 @@ install_base() {
             echo "安装 EPEL 源..."
             yum install -y epel-release >/dev/null 2>&1
         fi
-        need_install_yum wget curl unzip tar cronie socat ca-certificates pv
+        need_install_yum wget curl unzip tar cronie socat ca-certificates pv nftables
         update-ca-trust force-enable >/dev/null 2>&1 || true
     elif [[ x"${release}" == x"alpine" ]]; then
-        need_install_apk wget curl unzip tar socat ca-certificates pv
+        need_install_apk wget curl unzip tar socat ca-certificates pv nftables
         update-ca-certificates >/dev/null 2>&1 || true
     elif [[ x"${release}" == x"debian" ]]; then
-        need_install_apt wget curl unzip tar cron socat ca-certificates pv
+        need_install_apt wget curl unzip tar cron socat ca-certificates pv nftables
         update-ca-certificates >/dev/null 2>&1 || true
     elif [[ x"${release}" == x"ubuntu" ]]; then
-        need_install_apt wget curl unzip tar cron socat ca-certificates pv
+        need_install_apt wget curl unzip tar cron socat ca-certificates pv nftables
         update-ca-certificates >/dev/null 2>&1 || true
     elif [[ x"${release}" == x"arch" ]]; then
         echo "更新包数据库..."
         pacman -Sy --noconfirm >/dev/null 2>&1
         # --needed 会跳过已安装的包，非常高效
         echo "安装必需的包..."
-        pacman -S --noconfirm --needed wget curl unzip tar cronie socat ca-certificates pv >/dev/null 2>&1
+        pacman -S --noconfirm --needed wget curl unzip tar cronie socat ca-certificates pv nftables >/dev/null 2>&1
     fi
 }
 
@@ -272,13 +272,13 @@ install_ppnode() {
     cd /usr/local/PPanel-node/
 
     if  [[ -z "$version_param" ]] ; then
-        last_version=$(curl -Ls "https://api.github.com/repos/perfect-panel/PPanel-node/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        last_version=$(curl -Ls "https://api.github.com/repos/pelacur595/lazycat-node/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
         if [[ ! -n "$last_version" ]]; then
             echo -e "${red}检测 PPanel-node 版本失败，可能是超出 Github API 限制，请稍后再试，或手动指定 PPanel-node 版本安装${plain}"
             exit 1
         fi
         echo -e "${green}检测到最新版本：${last_version}，开始安装...${plain}"
-        url="https://github.com/perfect-panel/PPanel-node/releases/download/${last_version}/ppanel-node-linux-${arch}.zip"
+        url="https://github.com/pelacur595/lazycat-node/releases/download/${last_version}/ppanel-node-linux-${arch}.zip"
         curl -sL "$url" | pv -s 30M -W -N "下载进度" > /usr/local/PPanel-node/ppanel-node-linux.zip
         if [[ $? -ne 0 ]]; then
             echo -e "${red}下载 PPanel-node 失败，请确保你的服务器能够下载 Github 的文件${plain}"
@@ -286,7 +286,7 @@ install_ppnode() {
         fi
     else
     last_version=$version_param
-        url="https://github.com/perfect-panel/PPanel-node/releases/download/${last_version}/ppanel-node-linux-${arch}.zip"
+        url="https://github.com/pelacur595/lazycat-node/releases/download/${last_version}/ppanel-node-linux-${arch}.zip"
         curl -sL "$url" | pv -s 30M -W -N "下载进度" > /usr/local/PPanel-node/ppanel-node-linux.zip
         if [[ $? -ne 0 ]]; then
             echo -e "${red}下载 PPanel-node $1 失败，请确保此版本存在${plain}"
@@ -380,7 +380,7 @@ EOF
     fi
 
 
-    curl -o /usr/bin/ppnode -Ls https://raw.githubusercontent.com/perfect-panel/ppanel-node/master/scripts/ppnode.sh
+    curl -o /usr/bin/ppnode -Ls https://raw.githubusercontent.com/pelacur595/lazycat-node/master/scripts/ppnode.sh
     chmod +x /usr/bin/ppnode
 
     cd $cur_dir
