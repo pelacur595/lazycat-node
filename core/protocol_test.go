@@ -116,6 +116,10 @@ func protocolServer(t *testing.T, name string, variant ...string) (*XrayCore, in
 	t.Cleanup(func() { c.Close() })
 	allowLoopbackForTest(t, c)
 	info := &panel.NodeInfo{Id: 1, Type: name, Protocol: &panel.Protocol{Port: port, Transport: "tcp", Cipher: "aes-128-gcm", Encryption: "none"}}
+	if name == "hysteria2" && len(variant) != 0 {
+		info.Protocol.Obfs = "salamander"
+		info.Protocol.ObfsPassword = protocolTestMaskPassword
+	}
 	if name == "shadowsocks" && len(variant) != 0 {
 		info.Protocol.Cipher = variant[0]
 		info.Protocol.ServerKey = protocolSS2022ServerKey(variant[0])
@@ -170,7 +174,12 @@ func protocolServer(t *testing.T, name string, variant ...string) (*XrayCore, in
 
 func protocolClient(t *testing.T, name string, port int, pin string, ssCipher ...string) *xray.Instance {
 	t.Helper()
-	item := panel.Outbound{Name: "test-client", Protocol: name, Address: "127.0.0.1", Port: port, UUID: protocolTestUUID, Password: protocolTestUUID}
+	return protocolClientAt(t, name, "127.0.0.1", port, pin, ssCipher...)
+}
+
+func protocolClientAt(t *testing.T, name, host string, port int, pin string, ssCipher ...string) *xray.Instance {
+	t.Helper()
+	item := panel.Outbound{Name: "test-client", Protocol: name, Address: host, Port: port, UUID: protocolTestUUID, Password: protocolTestUUID}
 	if name == "hysteria2" {
 		item.Protocol = "hysteria"
 	}
@@ -193,6 +202,11 @@ func protocolClient(t *testing.T, name string, port int, pin string, ssCipher ..
 		stream := map[string]any{"network": network, "security": "tls", "tlsSettings": map[string]any{"serverName": "localhost", "pinnedPeerCertSha256": pin}}
 		if name == "hysteria2" {
 			stream["hysteriaSettings"] = map[string]any{"version": 2, "auth": protocolTestUUID}
+			if len(ssCipher) != 0 {
+				stream["finalmask"] = map[string]any{"udp": []any{map[string]any{
+					"type": "salamander", "settings": map[string]any{"password": protocolTestMaskPassword},
+				}}}
+			}
 		}
 		raw, _ := json.Marshal(stream)
 		item.StreamSettings = string(raw)
@@ -225,7 +239,7 @@ func protocolClient(t *testing.T, name string, port int, pin string, ssCipher ..
 }
 
 func TestUpgradedProtocolsRelayAndTrackUsers(t *testing.T) {
-	for _, testName := range []string{"vless", "vmess", "shadowsocks", "shadowsocks/2022-blake3-aes-128-gcm", "shadowsocks/2022-blake3-aes-256-gcm", "trojan", "anytls", "hysteria2", "tuic", "tuic/salamander"} {
+	for _, testName := range []string{"vless", "vmess", "shadowsocks", "shadowsocks/2022-blake3-aes-128-gcm", "shadowsocks/2022-blake3-aes-256-gcm", "trojan", "anytls", "hysteria2", "hysteria2/salamander", "tuic", "tuic/salamander"} {
 		t.Run(testName, func(t *testing.T) {
 			parts := strings.Split(testName, "/")
 			name, variant := parts[0], parts[1:]
